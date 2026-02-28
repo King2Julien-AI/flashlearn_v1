@@ -9,6 +9,7 @@ import {
 } from "./lib/storage.js";
 import { makeSample } from "./lib/sample.js";
 import { RATINGS, shuffle, applySessionRating, touchProgress } from "./lib/session.js";
+import { checkForUpdatesOnStartup } from "./lib/updates.js";
 
 const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -2334,3 +2335,5 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
 }
 
 render();
+
+checkForUpdatesOnStartup();
