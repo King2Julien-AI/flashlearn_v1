@@ -19,21 +19,25 @@ jobs:
           - os: macos-latest
             rust_target: aarch64-apple-darwin
             tauri_args: "--target aarch64-apple-darwin --bundles dmg"
+            asset_name_pattern: "FlashLearn-[version]-mac-apple-silicon[ext]"
 
           # macOS (Intel) -> DMG
           - os: macos-latest
             rust_target: x86_64-apple-darwin
             tauri_args: "--target x86_64-apple-darwin --bundles dmg"
+            asset_name_pattern: "FlashLearn-[version]-mac-intel[ext]"
 
           # Linux
           - os: ubuntu-22.04
             rust_target: ""
-            tauri_args: ""
+            tauri_args: "--bundles appimage"
+            asset_name_pattern: "FlashLearn-[version]-linux-x64[ext]"
 
           # Windows
           - os: windows-latest
             rust_target: ""
-            tauri_args: ""
+            tauri_args: "--bundles msi"
+            asset_name_pattern: "FlashLearn-[version]-windows-x64[ext]"
 
     runs-on: ${{ matrix.os }}
 
@@ -82,3 +86,4 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.tauri_args }}
+          releaseAssetNamePattern: ${{ matrix.asset_name_pattern }}
