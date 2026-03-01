@@ -230,7 +230,8 @@ function createShell() {
   app.innerHTML = `
     <aside class="sidebar">
       <div class="brand">
-        <img class="logoimg" src="./pwa/icon-192.png" alt="" />
+        <img class="logoimg" src="./pwa/icon-192.png" alt="Flashlearn logo" />
+        <h1>Flashlearn</h1>
       </div>
 
       <div class="nav" role="navigation" aria-label="App navigation">
