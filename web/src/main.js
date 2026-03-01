@@ -9,7 +9,7 @@ import {
 } from "./lib/storage.js";
 import { makeSample } from "./lib/sample.js";
 import { RATINGS, shuffle, applySessionRating, touchProgress } from "./lib/session.js";
-import { checkForUpdatesOnStartup } from "./lib/updates.js";
+import { checkForUpdates, checkForUpdatesOnStartup } from "./lib/updates.js";
 
 const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -1545,6 +1545,7 @@ function drawRatingsMixChart(canvas, sessions) {
 
 function renderSettings(view) {
   view.classList.remove("session");
+  const isDesktop = !!window.__TAURI_INTERNALS__;
   view.innerHTML = `
     <div class="header">
       <div class="hgroup">
@@ -1573,6 +1574,16 @@ function renderSettings(view) {
           <button class="btn" id="btnImportMerge">Merge</button>
           <button class="btn danger" id="btnImportReplace">Replace</button>
         </div>
+      </div>
+
+      <hr class="sep" />
+
+      <div class="row" style="justify-content:space-between; align-items:flex-start">
+        <div>
+          <strong>App updates</strong>
+          <div class="helper">${isDesktop ? "Check GitHub Releases for a newer desktop build." : "Only available in the desktop app."}</div>
+        </div>
+        <button class="btn" id="btnCheckUpdates" ${isDesktop ? "" : "disabled"}>Check now</button>
       </div>
 
       <hr class="sep" />
@@ -1618,6 +1629,10 @@ function renderSettings(view) {
     } catch (e) {
       toast("Import failed", String(e?.message ?? e));
     }
+  });
+
+  $("#btnCheckUpdates")?.addEventListener("click", async () => {
+    await checkForUpdates({ notifyNoUpdate: true });
   });
 
   $("#btnResetAll").addEventListener("click", () => {
