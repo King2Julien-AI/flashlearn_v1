@@ -231,10 +231,6 @@ function createShell() {
     <aside class="sidebar">
       <div class="brand">
         <img class="logoimg" src="./pwa/icon-192.png" alt="" />
-        <div>
-          <h1>Flashlearn</h1>
-          <p>local-only</p>
-        </div>
       </div>
 
       <div class="nav" role="navigation" aria-label="App navigation">
