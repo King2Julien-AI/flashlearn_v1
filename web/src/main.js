@@ -243,7 +243,7 @@ function createShell() {
       </div>
 
       <div class="foot">
-        Data is stored on this device. Export a backup in Settings.
+        You are an oficial alpha tester.
       </div>
     </aside>
 
