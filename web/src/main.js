@@ -317,6 +317,7 @@ function renderLibrary(view) {
         <p>${data.cards.length} cards • ${data.decks.length} decks • ${tags.length} tags</p>
       </div>
       <div class="row">
+        <button class="btn" id="btnImportCsvLibrary">Import CSV</button>
         <button class="btn primary" id="btnQuickStudy">Study</button>
       </div>
     </div>
@@ -365,6 +366,7 @@ function renderLibrary(view) {
     </div>
   `;
 
+  $("#btnImportCsvLibrary").addEventListener("click", () => openCsvImportEntry());
   $("#btnQuickStudy").addEventListener("click", () => setRoute("study"));
   $("#btnCreateDeck").addEventListener("click", () => openDeckModal());
   $("#btnCreateTag").addEventListener("click", () => openTagModal());
@@ -431,6 +433,7 @@ function renderDeckDetail(el, deckId) {
       </div>
       <div class="row">
         <button class="btn primary" id="btnCreateCard">Create card</button>
+        <button class="btn" id="btnImportCsvDeck">Import CSV</button>
         <button class="btn" id="btnStudyDeck">Study deck</button>
       </div>
     </div>
@@ -462,6 +465,9 @@ function renderDeckDetail(el, deckId) {
   });
 
   $("#btnCreateCard").addEventListener("click", () => openCardModal({ mode: "create", deckId: deck.id }));
+  $("#btnImportCsvDeck").addEventListener("click", () => {
+    openCsvImportWizard({ defaultDeckId: deck.id, lockToDefaultDeck: true });
+  });
   $("#btnStudyDeck").addEventListener("click", () => {
     state.study.mode = "builder";
     resetSessionRuntime();
@@ -1543,7 +1549,7 @@ function renderSettings(view) {
     <div class="header">
       <div class="hgroup">
         <h2>Settings</h2>
-        <p>Backups</p>
+        <p>Backup and restore</p>
       </div>
     </div>
 
@@ -1640,6 +1646,792 @@ function renderSettings(view) {
     };
     render();
   });
+}
+
+/* -----------------------------
+   CSV IMPORT
+------------------------------ */
+
+const CSV_REQUIRED_FIELDS = ["front", "back"];
+const CSV_OPTIONAL_FIELDS = ["deck", "tags", "notes"];
+const CSV_FIELD_ALIASES = {
+  front: ["front", "question", "prompt", "term", "word", "q", "card_front"],
+  back: ["back", "answer", "definition", "meaning", "a", "card_back"],
+  deck: ["deck", "deck_name", "collection", "folder", "category"],
+  tags: ["tags", "tag", "labels", "topics"],
+  notes: ["notes", "note", "hint", "hints", "extra", "explanation"]
+};
+
+function buildSimpleCsvPrompt() {
+  return [
+    "Here is the required CSV format (semicolon separator):",
+    "front;back",
+    "Include the header row as the first line.",
+    "If a value contains ; or a line break, wrap that value in quotes.",
+    "Return the result as a CSV file that I can download."
+  ].join("\n");
+}
+
+function buildAdvancedCsvPrompt() {
+  return [
+    "Here is the required CSV format (semicolon separator):",
+    "front;back;deck;tags;notes",
+    "Include the header row as the first line.",
+    "tags should use | between tags (example: algebra|exam-prep).",
+    "notes can be empty if not needed.",
+    "If a value contains ; or a line break, wrap that value in quotes.",
+    "Return the result as a CSV file that I can download."
+  ].join("\n");
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(String(text ?? ""));
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = String(text ?? "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function openCsvImportEntry() {
+  const selectedDeck =
+    state.library.selection?.type === "deck"
+      ? deckById(state.library.selection.id)
+      : null;
+
+  if (!selectedDeck) {
+    openCsvImportWizard();
+    return;
+  }
+
+  openModal({
+    title: "Import CSV",
+    body: `
+      <div class="helper">Choose how you want to import cards.</div>
+      <div style="height:10px"></div>
+      <div class="row" style="justify-content:space-between">
+        <div>
+          <strong>Into selected deck</strong>
+          <div class="helper">${escapeHtml(selectedDeck.name)}</div>
+        </div>
+        <button class="btn primary" id="csvEntrySelected">Use selected deck</button>
+      </div>
+      <hr class="sep" />
+      <div class="row" style="justify-content:space-between">
+        <div>
+          <strong>Use deck column</strong>
+          <div class="helper">Import to multiple decks from the CSV file.</div>
+        </div>
+        <button class="btn" id="csvEntryMulti">Use CSV deck mapping</button>
+      </div>
+      <hr class="sep" />
+      <details class="card pad" style="border-radius:14px; box-shadow:none;">
+        <summary style="cursor:pointer; font-weight:700;">Information & LLM prompt templates</summary>
+        <div style="height:10px"></div>
+        <div class="helper">
+          Use this helper when you generate cards in ChatGPT/another LLM and want to import them here.
+          First write your normal request (topic, number of cards, level, style), then paste one of the prompt snippets below at the end.
+        </div>
+        <div style="height:8px"></div>
+        <div class="helper">
+          Simple format: <code>front;back</code><br/>
+          Advanced format: <code>front;back;deck;tags;notes</code><br/>
+          Supported separators in import: <code>;</code>, <code>,</code>, and tab.<br/>
+          Recommended/default separator is <code>;</code>.<br/>
+          Supported fields: required <code>front</code>, <code>back</code>; optional <code>deck</code>, <code>tags</code>, <code>notes</code>.<br/>
+          For tags, use a single cell and separate tags with <code>|</code>.
+        </div>
+        <div style="height:10px"></div>
+        <div class="row" style="justify-content:space-between">
+          <div>
+            <div><strong>Simple append prompt</strong></div>
+            <div class="helper">Paste this at the end of your normal request.</div>
+          </div>
+          <button class="btn small" id="copySimplePrompt">Copy simple prompt</button>
+        </div>
+        <div style="height:6px"></div>
+        <pre class="helper" id="csvSimplePromptPreview" style="white-space:pre-wrap; border:1px solid var(--stroke); border-radius:12px; padding:10px; background:rgba(255,255,255,.02);"></pre>
+        <div style="height:10px"></div>
+        <div class="row" style="justify-content:space-between">
+          <div>
+            <div><strong>Advanced append prompt</strong></div>
+            <div class="helper">Paste this at the end of your normal request.</div>
+          </div>
+          <button class="btn small" id="copyAdvancedPrompt">Copy advanced prompt</button>
+        </div>
+        <div style="height:6px"></div>
+        <pre class="helper" id="csvAdvancedPromptPreview" style="white-space:pre-wrap; border:1px solid var(--stroke); border-radius:12px; padding:10px; background:rgba(255,255,255,.02);"></pre>
+      </details>
+      <hr class="sep" />
+      <div class="row" style="justify-content:flex-end">
+        <button class="btn" data-close>Cancel</button>
+      </div>
+    `,
+    onMount(modal) {
+      const simplePreview = $("#csvSimplePromptPreview", modal);
+      const advancedPreview = $("#csvAdvancedPromptPreview", modal);
+
+      simplePreview.textContent = buildSimpleCsvPrompt();
+      advancedPreview.textContent = buildAdvancedCsvPrompt();
+
+      $("#copySimplePrompt", modal).addEventListener("click", async () => {
+        const ok = await copyToClipboard(buildSimpleCsvPrompt());
+        toast(ok ? "Copied" : "Copy failed", ok ? "Simple prompt copied to clipboard." : "Could not copy prompt.");
+      });
+      $("#copyAdvancedPrompt", modal).addEventListener("click", async () => {
+        const ok = await copyToClipboard(buildAdvancedCsvPrompt());
+        toast(ok ? "Copied" : "Copy failed", ok ? "Advanced prompt copied to clipboard." : "Could not copy prompt.");
+      });
+
+      $("#csvEntrySelected", modal).addEventListener("click", () => {
+        closeModal(modal);
+        openCsvImportWizard({ defaultDeckId: selectedDeck.id, lockToDefaultDeck: true });
+      });
+      $("#csvEntryMulti", modal).addEventListener("click", () => {
+        closeModal(modal);
+        openCsvImportWizard();
+      });
+    }
+  });
+}
+
+async function openCsvImportWizard(opts = {}) {
+  const file = await pickCsvFile();
+  if (!file) return;
+
+  const requestedDeckId = opts.defaultDeckId ?? null;
+  const requestedDeck = requestedDeckId ? deckById(requestedDeckId) : null;
+  const lockToDefaultDeck = !!opts.lockToDefaultDeck && !!requestedDeck;
+  const defaultDeckId = requestedDeck?.id ?? data.settings.lastDeckId ?? data.decks[0]?.id ?? "";
+
+  const fieldRows = [...CSV_REQUIRED_FIELDS, ...CSV_OPTIONAL_FIELDS];
+  const fieldLabels = {
+    front: "Front (required)",
+    back: "Back (required)",
+    deck: "Deck (optional)",
+    tags: "Tags (optional)",
+    notes: "Notes (optional)"
+  };
+
+  const deckOptions = data.decks
+    .slice()
+    .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""))
+    .map(d => `<option value="${d.id}">${escapeHtml(d.name)}</option>`)
+    .join("");
+
+  openModal({
+    title: "Import flashcards from CSV",
+    body: `
+      <div class="helper">File: ${escapeHtml(file.name)}</div>
+      ${lockToDefaultDeck ? `<div class="helper">Deck is fixed to <b>${escapeHtml(requestedDeck.name)}</b>. CSV deck values will be ignored.</div>` : ""}
+      <div style="height:10px"></div>
+      <div class="grid2">
+        <div>
+          <label class="helper">Column separator (detected automatically, change if needed)</label>
+          <select class="select" id="csvDelimiter">
+            <option value=",">Comma (,)</option>
+            <option value=";">Semicolon (;)</option>
+            <option value="tab">Tab</option>
+          </select>
+        </div>
+        <div>
+          <label class="helper">Default deck (used when row has no deck)</label>
+          <select class="select" id="csvDefaultDeck">
+            ${deckOptions || `<option value="">No decks yet</option>`}
+          </select>
+        </div>
+        <div>
+          <label class="helper">Tag separator in CSV</label>
+          <select class="select" id="csvTagSep">
+            <option value=",">Comma (,)</option>
+            <option value=";">Semicolon (;)</option>
+            <option value="|">Pipe (|)</option>
+          </select>
+        </div>
+      </div>
+      <label class="row" style="margin-top:10px">
+        <input type="checkbox" id="csvHasHeader" checked />
+        <span>First row contains column names (header)</span>
+      </label>
+      <div id="csvParseSummary" class="helper"></div>
+
+      <div style="height:10px"></div>
+
+      <div class="csv-map">
+        ${fieldRows.map(field => `
+          <div>
+            <label class="helper">${fieldLabels[field]}</label>
+            <select class="select" data-csv-map="${field}">
+              <option value="">Do not import</option>
+            </select>
+          </div>
+        `).join("")}
+      </div>
+
+      <div style="height:10px"></div>
+
+      <label class="row">
+        <input type="checkbox" id="csvCreateDecks" checked />
+        <span>Create missing decks from CSV values</span>
+      </label>
+      <label class="row">
+        <input type="checkbox" id="csvSkipDup" checked />
+        <span>Skip duplicate front/back cards (same target deck)</span>
+      </label>
+
+      <hr class="sep" />
+      <div id="csvSummary" class="helper">Run validation to preview rows before import.</div>
+      <div style="height:10px"></div>
+      <div id="csvPreviewWrap"></div>
+
+      <hr class="sep" />
+      <div class="row" style="justify-content:space-between">
+        <button class="btn" id="csvDownloadErrors" disabled>Download errors CSV</button>
+        <div class="row">
+          <button class="btn" data-close>Cancel</button>
+          <button class="btn" id="csvValidate">Validate & Preview</button>
+          <button class="btn primary" id="csvImport" disabled>Import cards</button>
+        </div>
+      </div>
+    `,
+    onMount(modal) {
+      const selDelimiter = $("#csvDelimiter", modal);
+      const selDefaultDeck = $("#csvDefaultDeck", modal);
+      const selTagSep = $("#csvTagSep", modal);
+      const cHasHeader = $("#csvHasHeader", modal);
+      const cCreateDecks = $("#csvCreateDecks", modal);
+      const cSkipDup = $("#csvSkipDup", modal);
+      const parseSummaryEl = $("#csvParseSummary", modal);
+      const summaryEl = $("#csvSummary", modal);
+      const previewWrap = $("#csvPreviewWrap", modal);
+      const btnValidate = $("#csvValidate", modal);
+      const btnImport = $("#csvImport", modal);
+      const btnErrors = $("#csvDownloadErrors", modal);
+
+      if (defaultDeckId && selDefaultDeck) selDefaultDeck.value = defaultDeckId;
+
+      const mappingSelects = {};
+      fieldRows.forEach((field) => {
+        const select = modal.querySelector(`[data-csv-map="${field}"]`);
+        if (!select) return;
+        mappingSelects[field] = select;
+      });
+
+      let latestValidation = null;
+      let parsed = null;
+      selDelimiter.value = ";";
+
+      function resetMappingOptions(headers, inferred) {
+        const headerOptions = headers.map((h, i) => `<option value="${i}">${escapeHtml(h)}</option>`).join("");
+        for (const field of fieldRows) {
+          const select = mappingSelects[field];
+          if (!select) continue;
+          select.innerHTML = `
+            <option value="">Do not import</option>
+            ${headerOptions}
+          `;
+          if (inferred[field] != null) select.value = String(inferred[field]);
+        }
+        if (lockToDefaultDeck) {
+          selDefaultDeck.disabled = true;
+          if (mappingSelects.deck) {
+            mappingSelects.deck.value = "";
+            mappingSelects.deck.disabled = true;
+          }
+        }
+      }
+
+      function reparseCsv() {
+        const delimiterMode = selDelimiter?.value || ";";
+        const hasHeaderRow = !!cHasHeader?.checked;
+        try {
+          parsed = parseCsvFile(file.text, { delimiterMode, hasHeaderRow });
+          const inferred = inferCsvMapping(parsed.headers);
+          resetMappingOptions(parsed.headers, inferred);
+          parseSummaryEl.innerHTML = `
+            Parsed: ${parsed.rows.length} rows • delimiter: <code>${escapeHtml(parsed.delimiterName)}</code>
+          `;
+          clearValidationState();
+          if (!parsed.rows.length) {
+            summaryEl.textContent = "CSV parsed, but no data rows were found.";
+          }
+        } catch (e) {
+          parsed = null;
+          parseSummaryEl.textContent = `Parse error: ${String(e?.message ?? e)}`;
+          clearValidationState();
+        }
+      }
+
+      function readMapping() {
+        const out = {};
+        for (const field of fieldRows) {
+          const raw = mappingSelects[field]?.value ?? "";
+          out[field] = raw === "" ? null : Number(raw);
+        }
+        return out;
+      }
+
+      function renderValidation(result) {
+        summaryEl.innerHTML = `
+          <strong>Validation result:</strong>
+          ${result.validRows.length} valid •
+          ${result.errorRows.length} invalid •
+          ${result.warnRows} warnings
+        `;
+
+        if (!result.preview.length) {
+          previewWrap.innerHTML = `<div class="helper">No valid preview rows.</div>`;
+          return;
+        }
+
+        previewWrap.innerHTML = `
+          <div class="helper">Previewing first ${result.preview.length} valid rows</div>
+          <div style="height:8px"></div>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Row</th>
+                <th>Front</th>
+                <th>Back</th>
+                <th>Deck</th>
+                <th>Tags</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${result.preview.map(r => `
+                <tr>
+                  <td class="muted">${r.rowNumber}</td>
+                  <td>${escapeHtml(r.front)}</td>
+                  <td>${escapeHtml(r.back)}</td>
+                  <td>${escapeHtml(r.deckLabel)}</td>
+                  <td>${escapeHtml((r.tags ?? []).join(", ")) || "—"}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        `;
+      }
+
+      function runValidation() {
+        if (!parsed) {
+          summaryEl.textContent = "CSV could not be parsed. Check separator/header settings.";
+          return;
+        }
+        const mapping = readMapping();
+        if (lockToDefaultDeck) mapping.deck = null;
+        const options = {
+          defaultDeckId: selDefaultDeck?.value || null,
+          tagSeparator: selTagSep?.value || ",",
+          createMissingDecks: !!cCreateDecks?.checked,
+          skipDuplicates: !!cSkipDup?.checked,
+          lockToDefaultDeck
+        };
+        const result = validateCsvImportRows(parsed, mapping, options);
+        latestValidation = { mapping, options, ...result };
+
+        renderValidation(result);
+        btnImport.disabled = result.validRows.length === 0;
+        btnErrors.disabled = result.errorRows.length === 0;
+      }
+
+      btnValidate.addEventListener("click", runValidation);
+
+      function clearValidationState() {
+        latestValidation = null;
+        btnImport.disabled = true;
+        btnErrors.disabled = true;
+        summaryEl.textContent = "Run validation to preview rows before import.";
+        previewWrap.innerHTML = "";
+      }
+
+      [...Object.values(mappingSelects), selDefaultDeck, selTagSep, cCreateDecks, cSkipDup]
+        .filter(Boolean)
+        .forEach((el) => el.addEventListener("change", clearValidationState));
+
+      [selDelimiter, cHasHeader]
+        .filter(Boolean)
+        .forEach((el) => el.addEventListener("change", reparseCsv));
+
+      btnImport.addEventListener("click", () => {
+        if (!latestValidation) runValidation();
+        if (!latestValidation || latestValidation.validRows.length === 0) return;
+
+        const imported = executeCsvImport(latestValidation);
+        saveData(data);
+        toast(
+          "CSV import complete",
+          `${imported} imported • ${latestValidation.errorRows.length} skipped`
+        );
+        closeModal(modal);
+        render();
+      });
+
+      btnErrors.addEventListener("click", () => {
+        if (!latestValidation || !latestValidation.errorRows.length) return;
+        const csv = errorRowsToCsv(latestValidation.errorRows);
+        downloadText(`flashlearn-csv-errors-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+      });
+
+      reparseCsv();
+    }
+  });
+}
+
+function normalizeCsvHeaderName(name) {
+  return String(name ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/[^\w]/g, "");
+}
+
+function inferCsvMapping(headers) {
+  const normalized = headers.map(h => normalizeCsvHeaderName(h));
+  const out = { front: headers[0] != null ? 0 : null, back: headers[1] != null ? 1 : null, deck: null, tags: null, notes: null };
+  for (const field of [...CSV_REQUIRED_FIELDS, ...CSV_OPTIONAL_FIELDS]) {
+    const aliases = CSV_FIELD_ALIASES[field] ?? [];
+    let idx = -1;
+    for (let i = 0; i < normalized.length; i++) {
+      if (aliases.includes(normalized[i])) { idx = i; break; }
+    }
+    if (idx !== -1) out[field] = idx;
+  }
+  return out;
+}
+
+function detectCsvDelimiter(raw) {
+  const candidates = [",", ";", "\t"];
+  const sample = String(raw ?? "").split(/\r?\n/).slice(0, 12).join("\n");
+  let best = { delimiter: ",", score: -1 };
+
+  for (const delimiter of candidates) {
+    let total = 0;
+    for (const line of sample.split("\n")) {
+      let inQuotes = false;
+      let count = 0;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === "\"") {
+          if (inQuotes && line[i + 1] === "\"") { i += 1; continue; }
+          inQuotes = !inQuotes;
+          continue;
+        }
+        if (!inQuotes && ch === delimiter) count += 1;
+      }
+      total += count;
+    }
+    if (total > best.score) best = { delimiter, score: total };
+  }
+  return best.delimiter;
+}
+
+function parseCsvRows(raw, delimiter) {
+  const text = String(raw ?? "").replace(/^\uFEFF/, "");
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const next = text[i + 1];
+
+    if (inQuotes) {
+      if (ch === "\"") {
+        if (next === "\"") {
+          cell += "\"";
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cell += ch;
+      }
+      continue;
+    }
+
+    if (ch === "\"") {
+      inQuotes = true;
+      continue;
+    }
+
+    if (ch === delimiter) {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+
+    if (ch === "\n") {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+
+    if (ch === "\r") {
+      continue;
+    }
+
+    cell += ch;
+  }
+
+  if (inQuotes) throw new Error("CSV has an unterminated quoted value.");
+  if (cell.length > 0 || row.length > 0) {
+    row.push(cell);
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function parseCsvFile(raw, opts = {}) {
+  const delimiterMode = opts.delimiterMode ?? "auto";
+  const hasHeaderRow = opts.hasHeaderRow !== false;
+  const delimiter = delimiterMode === "auto"
+    ? detectCsvDelimiter(raw)
+    : delimiterMode === "tab"
+      ? "\t"
+      : delimiterMode;
+  const rows = parseCsvRows(raw, delimiter);
+  if (!rows.length) throw new Error("CSV contains no rows.");
+
+  const firstRow = rows[0] ?? [];
+  const rawHeaders = hasHeaderRow
+    ? firstRow.map(h => String(h ?? "").trim())
+    : firstRow.map((_, i) => `column_${i + 1}`);
+  if (hasHeaderRow && !rawHeaders.length) throw new Error("CSV header row is empty.");
+
+  const headers = rawHeaders.map((h, i) => h || `column_${i + 1}`);
+  const dedupe = new Map();
+  const uniqueHeaders = headers.map((h) => {
+    const n = dedupe.get(h) ?? 0;
+    dedupe.set(h, n + 1);
+    return n === 0 ? h : `${h}_${n + 1}`;
+  });
+
+  const dataRows = [];
+  const startIndex = hasHeaderRow ? 1 : 0;
+  for (let i = startIndex; i < rows.length; i++) {
+    const row = rows[i];
+    const values = uniqueHeaders.map((_, idx) => String(row[idx] ?? "").trim());
+    if (values.every(v => v === "")) continue;
+    dataRows.push({ rowNumber: i + 1, values });
+  }
+
+  const delimiterName = delimiter === "\t" ? "tab" : delimiter === ";" ? "semicolon" : "comma";
+  return {
+    delimiter,
+    delimiterName,
+    headers: uniqueHeaders,
+    rows: dataRows
+  };
+}
+
+function normalizeDupText(s) {
+  return String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function parseTagList(raw, separator) {
+  const parts = String(raw ?? "")
+    .split(separator || ",")
+    .map(x => x.trim())
+    .filter(Boolean);
+  return normalizeTags(parts);
+}
+
+function validateCsvImportRows(parsed, mapping, options) {
+  const errors = [];
+  const validRows = [];
+  let warnings = 0;
+
+  const frontIdx = mapping.front;
+  const backIdx = mapping.back;
+  const deckIdx = mapping.deck;
+  const tagsIdx = mapping.tags;
+  const notesIdx = mapping.notes;
+
+  if (frontIdx == null || backIdx == null) {
+    return {
+      validRows: [],
+      errorRows: [{ rowNumber: 1, reason: "Front and back columns are required in mapping." }],
+      warnRows: 0,
+      preview: []
+    };
+  }
+  if (frontIdx === backIdx) {
+    return {
+      validRows: [],
+      errorRows: [{ rowNumber: 1, reason: "Front and back mappings must use different columns." }],
+      warnRows: 0,
+      preview: []
+    };
+  }
+
+  const decksByLower = new Map(data.decks.map(d => [String(d.name ?? "").trim().toLowerCase(), d]));
+  const hasDefaultDeck = !!options.defaultDeckId;
+  const lockToDefaultDeck = !!options.lockToDefaultDeck;
+  const existingDupes = new Set(
+    data.cards.map(c => `id:${c.deckId}|${normalizeDupText(c.front)}|${normalizeDupText(c.back)}`)
+  );
+  const seen = new Set(existingDupes);
+
+  for (const row of parsed.rows) {
+    const front = String(row.values[frontIdx] ?? "").trim();
+    const back = String(row.values[backIdx] ?? "").trim();
+    const notes = notesIdx == null ? "" : String(row.values[notesIdx] ?? "").trim();
+    const rawDeck = lockToDefaultDeck || deckIdx == null ? "" : String(row.values[deckIdx] ?? "").trim();
+    const tags = tagsIdx == null ? [] : parseTagList(row.values[tagsIdx], options.tagSeparator);
+
+    if (!front || !back) {
+      errors.push({ rowNumber: row.rowNumber, reason: "Missing required front or back value." });
+      continue;
+    }
+    if (front.length > 2000 || back.length > 4000 || notes.length > 6000) {
+      errors.push({ rowNumber: row.rowNumber, reason: "Field length exceeded (front/back/notes too long)." });
+      continue;
+    }
+
+    let deckRef = "";
+    let deckLabel = "";
+    if (rawDeck) {
+      const match = decksByLower.get(rawDeck.toLowerCase());
+      if (match) {
+        deckRef = `id:${match.id}`;
+        deckLabel = match.name;
+      } else if (options.createMissingDecks) {
+        deckRef = `name:${rawDeck.toLowerCase()}`;
+        deckLabel = rawDeck;
+      } else {
+        errors.push({ rowNumber: row.rowNumber, reason: `Deck "${rawDeck}" not found.` });
+        continue;
+      }
+    } else if (hasDefaultDeck) {
+      deckRef = `id:${options.defaultDeckId}`;
+      const d = deckById(options.defaultDeckId);
+      deckLabel = d?.name ?? "Default deck";
+    } else {
+      deckRef = "id:";
+      deckLabel = "Imported CSV";
+      warnings += 1;
+    }
+
+    const dupeKey = `${deckRef}|${normalizeDupText(front)}|${normalizeDupText(back)}`;
+    if (options.skipDuplicates && seen.has(dupeKey)) {
+      errors.push({ rowNumber: row.rowNumber, reason: "Duplicate card in target deck." });
+      continue;
+    }
+    seen.add(dupeKey);
+
+    validRows.push({
+      rowNumber: row.rowNumber,
+      front,
+      back,
+      notes,
+      tags,
+      deckRef,
+      deckLabel
+    });
+  }
+
+  return {
+    validRows,
+    errorRows: errors,
+    warnRows: warnings,
+    preview: validRows.slice(0, 20)
+  };
+}
+
+function ensureDeckForCsvRow(row, createdDecksByLower) {
+  if (row.deckRef.startsWith("id:")) {
+    const id = row.deckRef.slice(3);
+    if (id) return id;
+  }
+
+  if (row.deckRef.startsWith("name:")) {
+    const nameLower = row.deckRef.slice(5);
+    const existing = createdDecksByLower.get(nameLower);
+    if (existing) return existing.id;
+
+    const deck = {
+      id: uid("deck"),
+      name: row.deckLabel,
+      tags: [],
+      createdAt: now(),
+      updatedAt: now()
+    };
+    upsertDeck(data, deck);
+    createdDecksByLower.set(nameLower, deck);
+    return deck.id;
+  }
+
+  // no default deck available; create one lazily once
+  const key = "__imported_csv__";
+  const existing = createdDecksByLower.get(key);
+  if (existing) return existing.id;
+  const deck = {
+    id: uid("deck"),
+    name: "Imported CSV",
+    tags: [],
+    createdAt: now(),
+    updatedAt: now()
+  };
+  upsertDeck(data, deck);
+  createdDecksByLower.set(key, deck);
+  return deck.id;
+}
+
+function executeCsvImport(validationResult) {
+  const createdDecksByLower = new Map(data.decks.map(d => [String(d.name ?? "").trim().toLowerCase(), d]));
+  let imported = 0;
+
+  for (const row of validationResult.validRows) {
+    const deckId = ensureDeckForCsvRow(row, createdDecksByLower);
+    const card = {
+      id: uid("card"),
+      deckId,
+      kind: "basic",
+      imageData: null,
+      choices: null,
+      front: row.front,
+      back: row.back,
+      notes: row.notes,
+      tags: row.tags,
+      tagExcludes: [],
+      createdAt: now(),
+      updatedAt: now(),
+      progress: { lastReviewed: null, reviews: 0 }
+    };
+    upsertCard(data, card);
+    imported += 1;
+  }
+
+  return imported;
+}
+
+function escapeCsvCell(value) {
+  const s = String(value ?? "");
+  if (/[",\n]/.test(s)) return `"${s.replaceAll("\"", "\"\"")}"`;
+  return s;
+}
+
+function errorRowsToCsv(rows) {
+  const header = ["row_number", "reason"].join(",");
+  const lines = rows.map(r => [escapeCsvCell(r.rowNumber), escapeCsvCell(r.reason)].join(","));
+  return [header, ...lines].join("\n");
 }
 
 /* -----------------------------
@@ -2301,7 +3093,11 @@ function closeModal(modal) {
 ------------------------------ */
 
 function downloadText(filename, text) {
-  const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+  const lower = String(filename ?? "").toLowerCase();
+  const mime = lower.endsWith(".csv")
+    ? "text/csv;charset=utf-8"
+    : "application/json;charset=utf-8";
+  const blob = new Blob([text], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -2321,6 +3117,21 @@ async function pickTextFile() {
       const file = inp.files?.[0];
       if (!file) return resolve(null);
       resolve(await file.text());
+    };
+    inp.click();
+  });
+}
+
+async function pickCsvFile() {
+  return new Promise((resolve) => {
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = ".csv,text/csv";
+    inp.onchange = async () => {
+      const file = inp.files?.[0];
+      if (!file) return resolve(null);
+      const text = await file.text();
+      resolve({ name: file.name, text });
     };
     inp.click();
   });
