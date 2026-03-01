@@ -19,6 +19,9 @@ tauri-plugin-process = "2"
 serde_json = "1"
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
 
+[profile.dev]
+incremental = true
+
 [profile.release]
 panic = "abort"
 codegen-units = 1
