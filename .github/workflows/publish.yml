@@ -15,29 +15,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS (Apple Silicon) -> DMG
+          # macOS (Apple Silicon)
           - os: macos-latest
-            rust_target: aarch64-apple-darwin
-            tauri_args: "--target aarch64-apple-darwin --bundles dmg"
-            asset_name_pattern: "FlashLearn-[version]-mac-apple-silicon[ext]"
+            tauri_args: "--target aarch64-apple-darwin"
 
-          # macOS (Intel) -> DMG
+          # macOS (Intel)
           - os: macos-latest
-            rust_target: x86_64-apple-darwin
-            tauri_args: "--target x86_64-apple-darwin --bundles dmg"
-            asset_name_pattern: "FlashLearn-[version]-mac-intel[ext]"
+            tauri_args: "--target x86_64-apple-darwin"
 
           # Linux
           - os: ubuntu-22.04
-            rust_target: ""
-            tauri_args: "--bundles appimage"
-            asset_name_pattern: "FlashLearn-[version]-linux-x64[ext]"
+            tauri_args: ""
 
           # Windows
           - os: windows-latest
-            rust_target: ""
-            tauri_args: "--bundles msi"
-            asset_name_pattern: "FlashLearn-[version]-windows-x64[ext]"
+            tauri_args: ""
 
     runs-on: ${{ matrix.os }}
 
@@ -63,7 +55,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.rust_target }}
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -73,8 +65,18 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Verify release tag matches app version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          APP_VERSION=$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")
+          if [ "${GITHUB_REF_NAME}" != "app-v${APP_VERSION}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match app version app-v${APP_VERSION}" >&2
+            exit 1
+          fi
+
       - name: Publish (build + create GitHub Release)
-        uses: tauri-apps/tauri-action@v0.5.20
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -85,5 +87,6 @@ jobs:
           releaseBody: "See the assets to download and install this version."
           releaseDraft: false
           prerelease: false
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
           args: ${{ matrix.tauri_args }}
-          releaseAssetNamePattern: ${{ matrix.asset_name_pattern }}

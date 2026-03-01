@@ -741,7 +741,7 @@ dependencies = [
 
 [[package]]
 name = "flashlearn"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "fix-path-env",
  "serde_json",

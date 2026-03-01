@@ -14,20 +14,24 @@ Grab the latest release from the GitHub Releases page:
 
 * [https://github.com/King2Julien-AI/flashlearn_v1/releases](https://github.com/King2Julien-AI/flashlearn_v1/releases)
 
-Each release contains installers for all platforms **plus** `latest.json` and signature files (`.sig`) used for the updater.
+Each release contains platform installers for manual install **plus** updater artifacts, `latest.json`, and signature files (`.sig`) used by the in-app updater.
 
 ### macOS
 
-Choose the correct DMG:
+Choose the correct `.dmg` for your Mac:
 
-* **Apple Silicon (M1/M2/M3/…)**: `FlashLearn-<version>-mac-apple-silicon.dmg`
-* **Intel**: `FlashLearn-<version>-mac-intel.dmg`
+* **Apple Silicon (M1/M2/M3/…)**
+* **Intel**
 
 Install:
 
 1. Open the DMG
 2. Drag **FlashLearn.app** into **Applications**
-3. Start the app from **Applications**
+3. Start the app from **Applications** or run:
+
+```zsh
+open -a FlashLearn
+```
 
 #### macOS: “App can’t be opened” (not notarized)
 
@@ -35,9 +39,10 @@ This app is currently **not notarized** (Developer ID / notarization costs money
 
 If you trust the app, you can remove Apple’s quarantine flag **once**:
 
-Run in your terminal root:
+Run:
 ```zsh
-sudo xattr -dr com.apple.quarantine /Applications/FlashLearn.app
+xattr -dr com.apple.quarantine /Applications/FlashLearn.app
+open -a FlashLearn
 ```
 
 Then start the app again normally.
@@ -50,13 +55,13 @@ Then start the app again normally.
 
 Download:
 
-* `FlashLearn-<version>-linux-x64.AppImage`
+* the `.AppImage` asset from the release
 
 Install/run:
 
 ```bash
-chmod +x FlashLearn-*.AppImage
-./FlashLearn-*.AppImage
+chmod +x FlashLearn*.AppImage
+./FlashLearn*.AppImage
 ```
 
 ---
@@ -65,7 +70,7 @@ chmod +x FlashLearn-*.AppImage
 
 Download:
 
-* `FlashLearn-<version>-windows-x64.msi`
+* the `.msi` asset from the release
 
 Install:
 
@@ -76,12 +81,13 @@ Install:
 
 ## Auto-updates (Tauri updater)
 
-Releases include:
+Releases published by the GitHub Actions workflow include:
 
 * `latest.json` (update manifest)
+* updater bundles for each supported platform
 * `.sig` files (signatures)
 
-These are required for Tauri’s updater to verify and apply updates. If you self-host releases later, keep these files available at the updater endpoint.
+The app checks `https://github.com/King2Julien-AI/flashlearn_v1/releases/latest/download/latest.json` on startup. `latest.json` points to the signed updater bundles, while the DMG/AppImage/MSI assets remain available for direct manual installs.
 
 ---
 

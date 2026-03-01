@@ -20,7 +20,8 @@ export async function checkForUpdatesOnStartup() {
     await update.downloadAndInstall();
     await message("Update installed. Restarting…", { title: "Updated" });
     await relaunch();
-  } catch {
-    // Silent on startup by design (no scary popups)
+  } catch (error) {
+    // Keep startup quiet for users, but leave a breadcrumb for diagnostics.
+    console.warn("Updater check failed", error);
   }
 }
