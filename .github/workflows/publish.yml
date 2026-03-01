@@ -7,29 +7,37 @@ on:
       - "app-v*"
 
 jobs:
-  publish-tauri:
+  build-tauri:
     permissions:
-      contents: write
-
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
-          # macOS (Apple Silicon)
           - os: macos-latest
+            rust_target: aarch64-apple-darwin
             tauri_args: "--target aarch64-apple-darwin"
-
-          # macOS (Intel)
+            platform_key: darwin-aarch64
+            manual_name: mac-apple-silicon.dmg
+            artifact_name: release-darwin-aarch64
           - os: macos-latest
+            rust_target: x86_64-apple-darwin
             tauri_args: "--target x86_64-apple-darwin"
-
-          # Linux
+            platform_key: darwin-x86_64
+            manual_name: mac-intel.dmg
+            artifact_name: release-darwin-x86_64
           - os: ubuntu-22.04
+            rust_target: ""
             tauri_args: ""
-
-          # Windows
+            platform_key: linux-x86_64
+            manual_name: linux-x64.AppImage
+            artifact_name: release-linux-x86_64
           - os: windows-latest
+            rust_target: ""
             tauri_args: ""
+            platform_key: windows-x86_64
+            manual_name: windows-x64.msi
+            artifact_name: release-windows-x86_64
 
     runs-on: ${{ matrix.os }}
 
@@ -55,7 +63,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.rust_target }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -65,28 +73,87 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Verify release tag matches app version
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Build Tauri bundles
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -n "${{ matrix.tauri_args }}" ]; then
+            npm run tauri build -- ${{ matrix.tauri_args }}
+          else
+            npm run tauri build
+          fi
+
+      - name: Collect release files
+        run: >
+          node scripts/collect-release-artifacts.mjs
+          --out-dir release-assets
+          --platform-key ${{ matrix.platform_key }}
+          --manual-name ${{ matrix.manual_name }}
+
+      - name: Upload release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  publish-release:
+    permissions:
+      contents: write
+    needs: build-tauri
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Resolve release metadata
+        id: meta
         shell: bash
         run: |
           APP_VERSION=$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")
-          if [ "${GITHUB_REF_NAME}" != "app-v${APP_VERSION}" ]; then
-            echo "Tag ${GITHUB_REF_NAME} does not match app version app-v${APP_VERSION}" >&2
-            exit 1
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+            if [ "${RELEASE_TAG}" != "app-v${APP_VERSION}" ]; then
+              echo "Tag ${RELEASE_TAG} does not match app version app-v${APP_VERSION}" >&2
+              exit 1
+            fi
+          else
+            RELEASE_TAG="app-v${APP_VERSION}"
           fi
+          echo "version=${APP_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
 
-      - name: Publish (build + create GitHub Release)
-        uses: tauri-apps/tauri-action@v0.4.4
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
         with:
-          tagName: app-v__VERSION__
-          releaseName: "FlashLearn v__VERSION__"
-          releaseBody: "See the assets to download and install this version."
-          releaseDraft: false
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate latest.json
+        run: >
+          node scripts/generate-latest-json.mjs
+          --assets-dir release-assets
+          --repo ${{ github.repository }}
+          --tag ${{ steps.meta.outputs.tag }}
+          --version ${{ steps.meta.outputs.version }}
+
+      - name: Remove internal manifests
+        shell: bash
+        run: rm -f release-assets/*.updater-manifest.json
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: FlashLearn v${{ steps.meta.outputs.version }}
+          body: See the assets to download and install this version.
+          draft: false
           prerelease: false
-          uploadUpdaterJson: true
-          uploadUpdaterSignatures: true
-          args: ${{ matrix.tauri_args }}
+          files: release-assets/*
