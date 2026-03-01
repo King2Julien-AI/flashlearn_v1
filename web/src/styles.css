@@ -102,10 +102,6 @@ button, input, select, textarea{ font: inherit; color: inherit; }
   box-shadow: var(--shadow);
 }
 
-  100%{ transform: translateX(30%) rotate(25deg); }
-}
-
-
 .logoimg{
   width: 42px;
   height: 42px;
