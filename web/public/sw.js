@@ -1,4 +1,4 @@
-const CACHE = "vocab-trainer-v1";
+const CACHE = "flashlearn-v0.1.0";
 const ASSETS = [
   "./",
   "./index.html",

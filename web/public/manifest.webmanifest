@@ -1,6 +1,6 @@
 {
-  "name": "Vocab Trainer",
-  "short_name": "Vocab",
+  "name": "Flashlearn",
+  "short_name": "Flashlearn",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#0b0d12",

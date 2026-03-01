@@ -232,8 +232,8 @@ function createShell() {
       <div class="brand">
         <img class="logoimg" src="./pwa/icon-192.png" alt="" />
         <div>
-          <h1>Vocab Trainer</h1>
-          <p>Offline • local-only</p>
+          <h1>Flashlearn</h1>
+          <p>local-only</p>
         </div>
       </div>
 
@@ -1585,7 +1585,7 @@ function renderSettings(view) {
   `;
 
   $("#btnExportAll").addEventListener("click", () => {
-    downloadText(`vocab-trainer-backup-${new Date().toISOString().slice(0, 10)}.json`, exportJSON(data));
+    downloadText(`flashlearn-backup-${new Date().toISOString().slice(0, 10)}.json`, exportJSON(data));
   });
 
   $("#btnImportMerge").addEventListener("click", async () => {
